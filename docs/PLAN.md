@@ -22,6 +22,7 @@ The backend is the single source of truth and the only place rules are enforced.
 - **Seeding.** On startup the backend creates and seeds the database if the file doesn't exist. `npm run reset` deletes it and seeds again, so the queue can be restarted. The seed reads only the files named in `data/README.md`'s "insurer's systems" and "documents" sections; it never reads `data/evals/` or `data/security/`. The claims manual and `knowledge.json` are not loaded, as the spec leaves the manual out of the pilot.
 - **Claim statuses.** `waiting`, `in_progress`, `awaiting_sign_off` and `decided`, shown as Waiting, In progress, Waiting for sign-off and Decided. Every seed claim (`"status": "open"`) starts as `waiting`.
 - **Decision and payment are separate operations**, as the tech stack asks. `record_decision` stores approve, decline or refer with the payout, a two-or-three-sentence reason and the policy section. `pay_claim` takes the amount and is where the rule lives: the backend refuses a payment over the company's `payout_approval_limit` ($1,000, read from `company.json`) until a handler has signed off. It also refuses a payment that doesn't match the approved payout or comes twice.
+- **The status settles when the run ends.** A claim stays `in_progress` while the agent works, including after it records a decision, because it still has to pay. When the run ends the backend sets the status from the decision: `awaiting_sign_off` for an approval over the limit, `decided` otherwise, or back to `waiting` with an error step if there is no decision. (Changed during Phase 3: the first live run showed that moving the status at `record_decision` hid the payment step from anyone watching.)
 - **Sign-off.** `sign_off_claim` takes a handler id (there's no sign-in, so the handler picks their name). It records who signed off, releases the payment of the approved payout and moves the claim to `decided`.
 - **The agent's instructions live in the backend** as `backend/instructions.md`, served read only by `get_instructions`. The agent fetches them at the start of each run, and the dashboard shows the same text, so what the team reads is what the agent runs on.
 - **Steps.** The agent runs with `stream_mode="updates"` and posts each update to the backend as a step: the model's text, each tool call with its arguments, a short form of each tool result, the final reply, or an error. The dashboard polls a claim's steps every second while it is in progress. Polling is simpler than server-sent events and fast enough to watch an agent work.
@@ -94,7 +95,7 @@ Success criteria:
 
 Adds the operations that change a claim, and the $1,000 rule, which this phase proves with tests before any agent exists.
 
-- `record_decision`: allowed while the claim is `in_progress`. Approve with a payout over the limit moves the claim to `awaiting_sign_off`; every other decision moves it to `decided`. Decline and refer carry a payout of 0
+- `record_decision`: allowed once while the claim is `in_progress`. Decline and refer carry a payout of 0. When the run ends, an approval over the limit leaves the claim `awaiting_sign_off` and every other decision `decided`
 - `pay_claim`: needs an approve decision, an amount equal to the payout, no earlier payment, and a sign-off when the amount is over the limit
 - `sign_off_claim`: needs `awaiting_sign_off` and a handler who `can_approve_over_limit`; records the sign-off, pays and moves the claim to `decided`
 - `record_step` and `list_steps`
@@ -121,14 +122,14 @@ Replaces the hello-world agent with one that decides claims, and connects it to 
 
 Success criteria:
 
-- [ ] Stub-model tests run the whole flow against a test backend: the agent reads the claim, records an approve and pays, and the claim ends `decided` with the payment and its steps stored
-- [ ] A stub-model test approves $3,800.00, tries to pay, gets the refusal, and the claim ends `awaiting_sign_off` with no payment
-- [ ] A test makes the model raise, and the claim is back to `waiting` with an `error` step
-- [ ] `test_model_name` still passes: GPT-6 Luna with low reasoning effort by default, `MODEL_NAME` when set
-- [ ] The agent package imports nothing from `backend/` and opens no files: a search of `agent/` for `backend.`, `open(` and `data/` finds nothing
-- [ ] A live run with the real model (a few cents, or free with `MODEL_NAME=openrouter/free`): `uv run -m agent CLM-1001` approves $420.00 citing Section 3, Trip Delay, and its steps show each tool call. CLM-1001 is a 19-hour delay on a Premium policy with a 6-hour waiting period and receipts for $420.00, under the $800.00 maximum
-- [ ] A live run of CLM-1003, and if the agent approves more than $1,000, the claim is `awaiting_sign_off` with no payment
-- [ ] `npm run reset`, then `npm run check:python` passes
+- [x] Stub-model tests run the whole flow against a test backend: the agent reads the claim, records an approve and pays, and the claim ends `decided` with the payment and its steps stored
+- [x] A stub-model test approves $3,800.00, tries to pay, gets the refusal, and the claim ends `awaiting_sign_off` with no payment
+- [x] A test makes the model raise, and the claim is back to `waiting` with an `error` step
+- [x] `test_model_name` still passes: GPT-6 Luna with low reasoning effort by default, `MODEL_NAME` when set
+- [x] The agent package imports nothing from `backend/` and opens no files: a search of `agent/` for `backend.`, `open(` and `data/` finds nothing
+- [x] A live run with the real model (a few cents, or free with `MODEL_NAME=openrouter/free`): `uv run -m agent CLM-1001` approves $420.00 citing Section 3, Trip Delay, and its steps show each tool call. CLM-1001 is a 19-hour delay on a Premium policy with a 6-hour waiting period and receipts for $420.00, under the $800.00 maximum
+- [x] A live run of CLM-1003, and if the agent approves more than $1,000, the claim is `awaiting_sign_off` with no payment
+- [x] `npm run reset`, then `npm run check:python` passes
 
 ## Phase 4: The dashboard's shell and queue
 

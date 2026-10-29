@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from agent.main import run as run_claim
 from backend.db import DATA, database, load, path, seed
 
 INSTRUCTIONS = Path(__file__).parent / "instructions.md"
@@ -97,6 +98,38 @@ def require_status(
 
 def set_status(db: sqlite3.Connection, claim_id: str, status: str) -> None:
     db.execute("UPDATE claims SET status = ? WHERE claim_id = ?", (status, claim_id))
+
+
+def add_step(
+    db: sqlite3.Connection, claim_id: str, thread_id: str, kind: str, text: str
+) -> None:
+    db.execute(
+        "INSERT INTO steps (claim_id, thread_id, kind, text, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (claim_id, thread_id, kind, text, now()),
+    )
+
+
+def work(claim_id: str, thread_id: str) -> None:
+    """Run the agent on a claim, then settle the claim's status from its decision,
+    or put it back in the queue if there is none."""
+    problem = None
+    try:
+        run_claim(claim_id, thread_id)
+    except Exception as error:
+        problem = f"The agent stopped: {error}"
+    with database() as db:
+        decision = optional_row(db, "decisions", claim_id)
+        if decision is None:
+            problem = problem or "The agent finished without recording a decision."
+            status = "waiting"
+        elif decision["payout"] > APPROVAL_LIMIT:
+            status = "awaiting_sign_off"
+        else:
+            status = "decided"
+        if problem:
+            add_step(db, claim_id, thread_id, "error", problem)
+        set_status(db, claim_id, status)
 
 
 def optional_row(db: sqlite3.Connection, table: str, claim_id: str) -> Any:
@@ -202,12 +235,13 @@ def list_handlers() -> list[dict[str, Any]]:
 
 
 @app.post("/api/claims/{claim_id}/runs", operation_id="run_agent")
-def run_agent(claim_id: str) -> dict[str, str]:
+def run_agent(claim_id: str, background_tasks: BackgroundTasks) -> dict[str, str]:
     """Start the UnderCover Agent on a waiting claim."""
     thread_id = f"{claim_id}-{uuid4().hex[:8]}"
     with database() as db:
         require_status(db, claim_id, "waiting", "run the agent")
         set_status(db, claim_id, "in_progress")
+    background_tasks.add_task(work, claim_id, thread_id)
     return {"thread_id": thread_id}
 
 
@@ -229,11 +263,7 @@ def record_step(claim_id: str, step: Step) -> dict[str, str]:
     """Record a step the agent took on a claim."""
     with database() as db:
         status_of(db, claim_id)
-        db.execute(
-            "INSERT INTO steps (claim_id, thread_id, kind, text, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (claim_id, step.thread_id, step.kind, step.text, now()),
-        )
+        add_step(db, claim_id, step.thread_id, step.kind, step.text)
     return {"status": "recorded"}
 
 
@@ -241,9 +271,10 @@ def record_step(claim_id: str, step: Step) -> dict[str, str]:
 def record_decision(claim_id: str, decision: Decision) -> dict[str, Any]:
     """Record the decision on a claim the agent is working on."""
     payout = decision.payout if decision.decision == "approve" else 0
-    status = "awaiting_sign_off" if payout > APPROVAL_LIMIT else "decided"
     with database() as db:
         require_status(db, claim_id, "in_progress", "record a decision")
+        if optional_row(db, "decisions", claim_id) is not None:
+            raise HTTPException(409, f"{claim_id} already has a decision")
         db.execute(
             "INSERT INTO decisions VALUES (?, ?, ?, ?, ?, ?)",
             (
@@ -255,8 +286,7 @@ def record_decision(claim_id: str, decision: Decision) -> dict[str, Any]:
                 now(),
             ),
         )
-        set_status(db, claim_id, status)
-    return {"status": status, "payout": payout}
+    return {"decision": decision.decision, "payout": payout}
 
 
 @app.post("/api/claims/{claim_id}/payments", operation_id="pay_claim")
