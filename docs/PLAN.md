@@ -102,12 +102,12 @@ Adds the operations that change a claim, and the $1,000 rule, which this phase p
 
 Success criteria:
 
-- [ ] Tests cover each path: approve under the limit then pay (decided and paid), approve over the limit (awaiting sign-off), decline and refer (decided, payout 0)
-- [ ] A test pays $1,150.00 on an over-limit approval without a sign-off and gets 403, and no payment is stored
-- [ ] Tests get 409 for paying a declined claim, paying the wrong amount, paying twice, deciding a claim that isn't in progress, signing off a claim that isn't awaiting sign-off, and running a claim that isn't waiting
-- [ ] A test signs off as `HND-01` and finds the claim `decided`, paid the approved payout, with the handler recorded
-- [ ] Against the dev server, the same sequence works with real HTTP calls: `run_agent` on CLM-1002, an approve of $1,100.00, a 403 on payment, a sign-off, then `get_claim` shows the payment and the sign-off. `npm run reset` afterwards
-- [ ] `npm run check:python` passes with coverage of 80% or more
+- [x] Tests cover each path: approve under the limit then pay (decided and paid), approve over the limit (awaiting sign-off), decline and refer (decided, payout 0)
+- [x] A test pays $1,150.00 on an over-limit approval without a sign-off and gets 403, and no payment is stored
+- [x] Tests get 409 for paying a declined claim, paying the wrong amount, paying twice, deciding a claim that isn't in progress, signing off a claim that isn't awaiting sign-off, and running a claim that isn't waiting
+- [x] A test signs off as `HND-01` and finds the claim `decided`, paid the approved payout, with the handler recorded
+- [x] Against the dev server, the same sequence works with real HTTP calls: `run_agent` on CLM-1002, an approve of $1,100.00, a 403 on payment, a sign-off, then `get_claim` shows the payment and the sign-off. `npm run reset` afterwards
+- [x] `npm run check:python` passes with coverage of 80% or more
 
 ## Phase 3: The UnderCover Agent
 

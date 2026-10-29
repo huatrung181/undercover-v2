@@ -4,15 +4,46 @@ import json
 import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
-from backend.db import DATA, database, path, seed
+from backend.db import DATA, database, load, path, seed
 
 INSTRUCTIONS = Path(__file__).parent / "instructions.md"
 POLICY_WORDING = (DATA / "policy_wording.md").read_text(encoding="utf-8")
+APPROVAL_LIMIT: float = load("company.json")["payout_approval_limit"]
+STATUS_LABELS = {
+    "waiting": "waiting",
+    "in_progress": "in progress",
+    "awaiting_sign_off": "waiting for sign-off",
+    "decided": "decided",
+}
+
+
+class Decision(BaseModel):
+    decision: Literal["approve", "decline", "refer"]
+    payout: Annotated[float, Field(ge=0)]
+    reason: str
+    policy_section: str
+
+
+class Payment(BaseModel):
+    amount: float
+
+
+class SignOff(BaseModel):
+    handler_id: str
+
+
+class Step(BaseModel):
+    thread_id: str
+    kind: Literal["model", "tool_call", "tool_result", "error"]
+    text: str
 
 
 @asynccontextmanager
@@ -34,6 +65,38 @@ def record(db: sqlite3.Connection, table: str, key: str, value: str) -> dict[str
     if row is None:
         raise HTTPException(404, f"No {key.removesuffix('_id')} {value}")
     return json.loads(row["data"])
+
+
+def now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def money(amount: float) -> str:
+    return f"${amount:,.2f}"
+
+
+def status_of(db: sqlite3.Connection, claim_id: str) -> str:
+    """Return a claim's status, or raise a 404."""
+    row = db.execute(
+        "SELECT status FROM claims WHERE claim_id = ?", (claim_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, f"No claim {claim_id}")
+    return row["status"]
+
+
+def require_status(
+    db: sqlite3.Connection, claim_id: str, status: str, action: str
+) -> None:
+    """Raise a 409 unless the claim has the status the action needs."""
+    if status_of(db, claim_id) != status:
+        raise HTTPException(
+            409, f"{claim_id} must be {STATUS_LABELS[status]} to {action}"
+        )
+
+
+def set_status(db: sqlite3.Connection, claim_id: str, status: str) -> None:
+    db.execute("UPDATE claims SET status = ? WHERE claim_id = ?", (status, claim_id))
 
 
 def optional_row(db: sqlite3.Connection, table: str, claim_id: str) -> Any:
@@ -90,12 +153,8 @@ def list_claims() -> list[dict[str, Any]]:
 def get_claim(claim_id: str) -> dict[str, Any]:
     """Get a claim in full, with its decision, payment and sign-off."""
     with database() as db:
-        data = record(db, "claims", "claim_id", claim_id)
-        status = db.execute(
-            "SELECT status FROM claims WHERE claim_id = ?", (claim_id,)
-        ).fetchone()["status"]
-        return data | {
-            "status": status,
+        return record(db, "claims", "claim_id", claim_id) | {
+            "status": status_of(db, claim_id),
             "decision": optional_row(db, "decisions", claim_id),
             "payment": optional_row(db, "payments", claim_id),
             "sign_off": optional_row(db, "sign_offs", claim_id),
@@ -140,3 +199,116 @@ def list_handlers() -> list[dict[str, Any]]:
     with database() as db:
         rows = db.execute("SELECT data FROM handlers ORDER BY handler_id").fetchall()
     return [json.loads(row["data"]) for row in rows]
+
+
+@app.post("/api/claims/{claim_id}/runs", operation_id="run_agent")
+def run_agent(claim_id: str) -> dict[str, str]:
+    """Start the UnderCover Agent on a waiting claim."""
+    thread_id = f"{claim_id}-{uuid4().hex[:8]}"
+    with database() as db:
+        require_status(db, claim_id, "waiting", "run the agent")
+        set_status(db, claim_id, "in_progress")
+    return {"thread_id": thread_id}
+
+
+@app.get("/api/claims/{claim_id}/steps", operation_id="list_steps")
+def list_steps(claim_id: str) -> list[dict[str, Any]]:
+    """List the agent's steps on a claim, oldest first."""
+    with database() as db:
+        status_of(db, claim_id)
+        rows = db.execute(
+            "SELECT id, thread_id, kind, text, created_at FROM steps"
+            " WHERE claim_id = ? ORDER BY id",
+            (claim_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/claims/{claim_id}/steps", operation_id="record_step")
+def record_step(claim_id: str, step: Step) -> dict[str, str]:
+    """Record a step the agent took on a claim."""
+    with database() as db:
+        status_of(db, claim_id)
+        db.execute(
+            "INSERT INTO steps (claim_id, thread_id, kind, text, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (claim_id, step.thread_id, step.kind, step.text, now()),
+        )
+    return {"status": "recorded"}
+
+
+@app.post("/api/claims/{claim_id}/decision", operation_id="record_decision")
+def record_decision(claim_id: str, decision: Decision) -> dict[str, Any]:
+    """Record the decision on a claim the agent is working on."""
+    payout = decision.payout if decision.decision == "approve" else 0
+    status = "awaiting_sign_off" if payout > APPROVAL_LIMIT else "decided"
+    with database() as db:
+        require_status(db, claim_id, "in_progress", "record a decision")
+        db.execute(
+            "INSERT INTO decisions VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                claim_id,
+                decision.decision,
+                payout,
+                decision.reason,
+                decision.policy_section,
+                now(),
+            ),
+        )
+        set_status(db, claim_id, status)
+    return {"status": status, "payout": payout}
+
+
+@app.post("/api/claims/{claim_id}/payments", operation_id="pay_claim")
+def pay_claim(claim_id: str, payment: Payment) -> dict[str, Any]:
+    """Pay an approved claim its payout."""
+    with database() as db:
+        status_of(db, claim_id)
+        decision = optional_row(db, "decisions", claim_id)
+        if decision is None or decision["decision"] != "approve":
+            raise HTTPException(409, f"{claim_id} is not approved")
+        if optional_row(db, "payments", claim_id) is not None:
+            raise HTTPException(409, f"{claim_id} is already paid")
+        if round(payment.amount, 2) != round(decision["payout"], 2):
+            raise HTTPException(
+                409,
+                f"The payment must be the approved payout, {money(decision['payout'])}",
+            )
+        if (
+            payment.amount > APPROVAL_LIMIT
+            and optional_row(db, "sign_offs", claim_id) is None
+        ):
+            raise HTTPException(
+                403,
+                f"A payout over {money(APPROVAL_LIMIT)} waits for a handler's sign-off",
+            )
+        paid_at = now()
+        db.execute(
+            "INSERT INTO payments VALUES (?, ?, ?)", (claim_id, payment.amount, paid_at)
+        )
+    return {"amount": payment.amount, "paid_at": paid_at}
+
+
+@app.post("/api/claims/{claim_id}/sign-off", operation_id="sign_off_claim")
+def sign_off_claim(claim_id: str, sign_off: SignOff) -> dict[str, Any]:
+    """Sign off a payout over the approval limit and pay it."""
+    with database() as db:
+        require_status(db, claim_id, "awaiting_sign_off", "sign off")
+        handler = record(db, "handlers", "handler_id", sign_off.handler_id)
+        if not handler["can_approve_over_limit"]:
+            raise HTTPException(
+                403, f"{handler['name']} cannot sign off payouts over the limit"
+            )
+        payout = db.execute(
+            "SELECT payout FROM decisions WHERE claim_id = ?", (claim_id,)
+        ).fetchone()["payout"]
+        signed_at = now()
+        db.execute(
+            "INSERT INTO sign_offs VALUES (?, ?, ?)",
+            (claim_id, sign_off.handler_id, signed_at),
+        )
+        db.execute(
+            "INSERT INTO payments VALUES (?, ?, ?)", (claim_id, payout, signed_at)
+        )
+        set_status(db, claim_id, "decided")
+    return {"status": "decided", "payout": payout}
