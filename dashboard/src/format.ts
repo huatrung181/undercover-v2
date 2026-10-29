@@ -41,3 +41,7 @@ export function time(timestamp: string): string {
     second: "2-digit",
   });
 }
+
+export function message(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason);
+}

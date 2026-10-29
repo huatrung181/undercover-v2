@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { message } from "./format";
 
 export type Route =
   | { page: "queue" }
@@ -51,7 +52,7 @@ export function usePolling<T>(
           setError(undefined);
         },
         (reason: unknown) => {
-          if (active) setError(String(reason));
+          if (active) setError(message(reason));
         },
       );
     };

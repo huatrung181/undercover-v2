@@ -161,11 +161,11 @@ Everything about one claim: the claim itself, the agent at work, the decision an
 
 Success criteria:
 
-- [ ] Vitest tests cover a waiting claim with the run button, a running claim with steps appearing, each decision, a claim waiting for sign-off, and the sign-off
-- [ ] In the browser: open CLM-1001, run the agent, watch the steps arrive while it is in progress, then see the decision, its reason, the section and the payment, and the queue showing it decided
-- [ ] In the browser: CLM-1002 set up through the API as approved for $1,100.00 shows the sign-off warning; signing off as Dana Whitfield shows the payment and moves it to Decided
-- [ ] No console errors; `npm run reset` afterwards
-- [ ] `npm run check:ts` passes with coverage of 80% or more
+- [x] Vitest tests cover a waiting claim with the run button, a running claim with steps appearing, each decision, a claim waiting for sign-off, and the sign-off
+- [x] In the browser: open CLM-1001, run the agent, watch the steps arrive while it is in progress, then see the decision, its reason, the section and the payment, and the queue showing it decided
+- [x] In the browser: CLM-1002 set up through the API as approved for $1,100.00 shows the sign-off warning; signing off as Dana Whitfield shows the payment and moves it to Decided. (Checked with CLM-1003 instead, run by the real agent from the dashboard, since `run_agent` now starts the agent: approved for $3,750.00, then signed off)
+- [x] No console errors; `npm run reset` afterwards
+- [x] `npm run check:ts` passes with coverage of 80% or more
 
 ## Phase 6: End-to-end tests and handover
 

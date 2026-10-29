@@ -3,6 +3,14 @@ import type { Claim, QueuedClaim } from "./api";
 
 export type Routes = Record<string, unknown>;
 
+/** A reply that refuses the request, as the backend does. */
+export class Refusal {
+  constructor(
+    readonly status: number,
+    readonly detail: string,
+  ) {}
+}
+
 /** Stub fetch with a JSON reply for each "METHOD url", or "url" for a GET. */
 export function stubApi(routes: Routes) {
   const fetch = vi.fn((url: string, init?: RequestInit) => {
@@ -13,7 +21,13 @@ export function stubApi(routes: Routes) {
         Response.json({ detail: `No route ${key}` }, { status: 404 }),
       );
     }
-    return Promise.resolve(Response.json(routes[key]));
+    const reply = routes[key];
+    if (reply instanceof Refusal) {
+      return Promise.resolve(
+        Response.json({ detail: reply.detail }, { status: reply.status }),
+      );
+    }
+    return Promise.resolve(Response.json(reply));
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
