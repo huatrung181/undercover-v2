@@ -178,10 +178,10 @@ Proves the whole path in a real browser and leaves the docs ready for the next b
 
 Success criteria:
 
-- [ ] `npm run e2e` passes, and the dev database is unchanged by it
-- [ ] `npm run check` passes from a clean `npm run reset`
-- [ ] A live session: reset, run the agent from the dashboard on five claims of different types (CLM-1001, CLM-1003, CLM-1004, CLM-1009, CLM-1013), and each ends decided or waiting for sign-off with a reason and a section. I report the decisions so we can read them against the policy wording together
-- [ ] `docs/STATUS.md` matches what was built
+- [x] `npm run e2e` passes, and the dev database is unchanged by it
+- [x] `npm run check` passes from a clean `npm run reset`
+- [x] A live session: reset, run the agent from the dashboard on five claims of different types (CLM-1001, CLM-1003, CLM-1004, CLM-1009, CLM-1013), and each ends decided or waiting for sign-off with a reason and a section. I report the decisions so we can read them against the policy wording together
+- [x] `docs/STATUS.md` matches what was built
 
 ---
 
