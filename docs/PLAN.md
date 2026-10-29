@@ -144,10 +144,10 @@ The brand, the layout, the queue and the instructions page.
 
 Success criteria:
 
-- [ ] Vitest tests with a stubbed `fetch` cover the queue (rows, counts, status labels, money as $1,150.00), the instructions page and the routing
-- [ ] In the browser with the Playwright MCP server at `http://localhost:5173`: the queue shows 25 claims and "Waiting 25"; the fonts and colors match the brand in light and dark mode; the instructions page shows the text from `backend/instructions.md`
-- [ ] The page has no console errors, and the layout holds at 1280 and 768 pixels wide
-- [ ] `npm run check:ts` passes with coverage of 80% or more
+- [x] Vitest tests with a stubbed `fetch` cover the queue (rows, counts, status labels, money as $1,150.00), the instructions page and the routing
+- [x] In the browser with the Playwright MCP server at `http://localhost:5173`: the queue shows 25 claims and "Waiting 25"; the fonts and colors match the brand in light and dark mode; the instructions page shows the text from `backend/instructions.md`
+- [x] The page has no console errors, and the layout holds at 1280 and 768 pixels wide
+- [x] `npm run check:ts` passes with coverage of 80% or more
 
 ## Phase 5: The claim page
 
